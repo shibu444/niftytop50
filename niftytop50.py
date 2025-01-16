@@ -1,85 +1,108 @@
 import yfinance as yf
 import pandas as pd
-import numpy as np
+import plotly.graph_objects as go
 import streamlit as st
+from datetime import datetime, timedelta
 
-# Function to fetch NIFTY50 stock symbols
-def get_nifty50_symbols():
-    return [
-        "RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS",
-        "HINDUNILVR.NS", "SBIN.NS", "BHARTIARTL.NS", "ADANIENT.NS", "HDFC.NS",
-        "KOTAKBANK.NS", "ITC.NS", "LT.NS", "WIPRO.NS", "TITAN.NS",
-        "ASIANPAINT.NS", "ULTRACEMCO.NS", "AXISBANK.NS", "DMART.NS", "MARUTI.NS",
-        "SUNPHARMA.NS", "TECHM.NS", "HCLTECH.NS", "NTPC.NS", "POWERGRID.NS",
-        "JSWSTEEL.NS", "TATAMOTORS.NS", "ONGC.NS", "COALINDIA.NS", "ADANIPORTS.NS",
-        "GRASIM.NS", "BAJAJFINSV.NS", "BAJFINANCE.NS", "M&M.NS", "EICHERMOT.NS",
-        "BPCL.NS", "DIVISLAB.NS", "SHREECEM.NS", "NESTLEIND.NS", "CIPLA.NS",
-        "SBILIFE.NS", "HDFCLIFE.NS", "HEROMOTOCO.NS", "BRITANNIA.NS", "TATASTEEL.NS",
-        "UPL.NS", "INDUSINDBK.NS", "DRREDDY.NS", "APOLLOHOSP.NS", "BAJAJ-AUTO.NS"
-    ]
+# Function to get stock data
+def get_stock_data(ticker, period):
+    # Get data from Yahoo Finance based on the selected period
+    stock_data = yf.download(ticker, period=period)
+    return stock_data
 
-# Function to calculate RSI
-def calculate_rsi(data, window=14):
-    delta = data['Close'].diff(1)
+# Function to calculate technical indicators (without using talib)
+def add_technical_indicators(df):
+    # Calculate Simple Moving Averages
+    df['SMA50'] = df['Close'].rolling(window=50).mean()
+    df['SMA100'] = df['Close'].rolling(window=100).mean()
+
+    # Calculate Relative Strength Index (RSI)
+    delta = df['Close'].diff(1)
     gain = delta.where(delta > 0, 0)
     loss = -delta.where(delta < 0, 0)
-    avg_gain = gain.rolling(window=window).mean()
-    avg_loss = loss.rolling(window=window).mean()
+
+    avg_gain = gain.rolling(window=14).mean()
+    avg_loss = loss.rolling(window=14).mean()
+
     rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
+    df['RSI'] = 100 - (100 / (1 + rs))
 
-# Function to calculate MACD
-def calculate_macd(data):
-    short_ema = data['Close'].ewm(span=12, adjust=False).mean()
-    long_ema = data['Close'].ewm(span=26, adjust=False).mean()
-    macd = short_ema - long_ema
-    signal = macd.ewm(span=9, adjust=False).mean()
-    return macd, signal
+    return df
 
-# Function to analyze a stock
-def analyze_stock(ticker):
-    data = yf.download(ticker, period="1mo", interval="15m")
-    data['RSI'] = calculate_rsi(data)
-    data['MACD'], data['Signal'] = calculate_macd(data)
+# Function to calculate returns and standard deviation
+def calculate_statistics(df):
+    # Calculate daily returns
+    df['Daily Return'] = df['Close'].pct_change()
+
+    # Get the last 90 days of data
+    df_90 = df[-90:]
+    avg_return = df_90['Daily Return'].mean()
+    std_dev = df_90['Daily Return'].std()
+
+    return avg_return, std_dev
+
+# Function to plot the candlestick chart with SMA and RSI
+def plot_candlestick_chart(df):
+    fig = go.Figure(data=[go.Candlestick(x=df.index,
+                                        open=df['Open'],
+                                        high=df['High'],
+                                        low=df['Low'],
+                                        close=df['Close'],
+                                        name="Candlestick")])
+
+    # Add SMA50 and SMA100
+    fig.add_trace(go.Scatter(x=df.index, y=df['SMA50'], mode='lines', name='SMA 50', line=dict(color='blue')))
+    fig.add_trace(go.Scatter(x=df.index, y=df['SMA100'], mode='lines', name='SMA 100', line=dict(color='orange')))
     
-    # Trading suggestion logic
-    last_rsi = data['RSI'].iloc[-1]
-    last_macd = data['MACD'].iloc[-1]
-    last_signal = data['Signal'].iloc[-1]
-    
-    if last_rsi < 30 and last_macd > last_signal:
-        suggestion = "Buy"
-    elif last_rsi > 70 and last_macd < last_signal:
-        suggestion = "Sell"
-    else:
-        suggestion = "Hold"
-    
-    return {
-        "RSI": last_rsi,
-        "MACD": last_macd,
-        "Signal": last_signal,
-        "Suggestion": suggestion
+    fig.update_layout(title="Candlestick Chart with SMA50 and SMA100",
+                      xaxis_title="Date",
+                      yaxis_title="Price",
+                      template="plotly_dark")
+    return fig
+
+def plot_rsi(df):
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], mode='lines', name='RSI', line=dict(color='green')))
+    fig.add_hline(y=70, line=dict(color='red', dash='dash'), annotation_text="Overbought", annotation_position="top left")
+    fig.add_hline(y=30, line=dict(color='blue', dash='dash'), annotation_text="Oversold", annotation_position="bottom left")
+
+    fig.update_layout(title="RSI Chart", xaxis_title="Date", yaxis_title="RSI", template="plotly_dark")
+    return fig
+
+# Streamlit UI
+st.title("Stock Price Data with Technical Indicators")
+
+# Input ticker symbol
+ticker = st.text_input("Enter Stock Ticker Symbol", "AAPL")
+
+# Dropdown for selecting time period
+period_options = ['1d', '5d', '1mo', '6mo', '1y', '5y', '10y']
+selected_period = st.selectbox("Select Data Range", period_options)
+
+# Get stock data
+df = get_stock_data(ticker, selected_period)
+
+if not df.empty:
+    # Add technical indicators
+    df = add_technical_indicators(df)
+
+    # Plot the candlestick chart with SMAs
+    st.plotly_chart(plot_candlestick_chart(df))
+
+    # Plot the RSI chart
+    st.plotly_chart(plot_rsi(df))
+
+    # Calculate returns and standard deviation for the last 90 days
+    avg_return, std_dev = calculate_statistics(df)
+
+    # Display statistics in a table
+    st.subheader("90-Day Average Return and Standard Deviation")
+    stats_data = {
+        "Average Return": [avg_return],
+        "Standard Deviation": [std_dev]
     }
+    stats_df = pd.DataFrame(stats_data)
+    st.write(stats_df)
 
-# Streamlit App
-st.title("NIFTY50 Intraday Trading Analyzer")
-
-nifty50_symbols = get_nifty50_symbols()
-selected_ticker = st.selectbox("Select a stock from NIFTY50:", nifty50_symbols)
-
-if st.button("Analyze"):
-    with st.spinner("Fetching and analyzing data..."):
-        analysis = analyze_stock(selected_ticker)
-    
-    st.write(f"### Analysis for {selected_ticker}")
-    st.write(f"**RSI:** {analysis['RSI']:.2f}")
-    st.write(f"**MACD:** {analysis['MACD']:.2f}")
-    st.write(f"**Signal:** {analysis['Signal']:.2f}")
-    st.write(f"**Trading Suggestion:** {analysis['Suggestion']}")
-    
-    # Fetch and display candlestick chart
-    data = yf.download(selected_ticker, period="1mo", interval="15m")
-    st.line_chart(data[['Close']])
-
-st.write("Note: This is a tool for educational purposes only. Trade responsibly!")
+else:
+    st.error("No data found for this ticker symbol.")
